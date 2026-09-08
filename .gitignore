@@ -1,0 +1,9 @@
+# Jinsai-G15 .gitignore
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.jinsai_cache.json
+.jinsai_chroma/
+*.log

@@ -1,0 +1,91 @@
+# Configuração de Perfis e Presets do Jinsai-G15 v2.2
+# Dell G15 5520 (RTX 3050 4GB VRAM + i5-12500H 16 threads + 16GB RAM)
+
+presets:
+  # 1. Modo 100% Offline: Zero custo, privacidade total e independência de rede
+  offline:
+    description: "Execução 100% local acelerada na RTX 3050 (Zero APIs externas)"
+    manager:
+      provider: "ollama"
+      model: "deepseek-r1:1.5b"
+      num_ctx: 4096
+      temperature: 0.3
+    dev_agent:
+      provider: "ollama"
+      model: "qwen2.5-coder:3b"
+      num_ctx: 4096
+      temperature: 0.2
+    embedding:
+      provider: "ollama"
+      model: "nomic-embed-text"
+
+  # 2. Modo Economia / Turbo: Custo quase zero com velocidade e contexto massivo
+  economy:
+    description: "Gemini 2.0 Flash na nuvem (1M tokens) + Qwen 2.5 Coder 3B local na GPU"
+    manager:
+      provider: "google"
+      model: "gemini/gemini-2.0-flash"
+      temperature: 0.2
+    dev_agent:
+      provider: "ollama"
+      model: "qwen2.5-coder:3b"
+      num_ctx: 4096
+      temperature: 0.2
+    embedding:
+      provider: "ollama"
+      model: "nomic-embed-text"
+
+  # 3. Modo Engenharia de Alta Precisão: Raciocínio Híbrido avançado para arquiteturas complexas
+  precision:
+    description: "Claude 3.7 Sonnet com Extended Thinking na nuvem + Qwen 2.5 Coder 3B local"
+    manager:
+      provider: "anthropic"
+      model: "claude-3-7-sonnet-20250219"
+      temperature: 1.0
+      extended_thinking: true
+      thinking_budget: 2048
+    dev_agent:
+      provider: "ollama"
+      model: "qwen2.5-coder:3b"
+      num_ctx: 4096
+      temperature: 0.2
+    embedding:
+      provider: "ollama"
+      model: "nomic-embed-text"
+
+  # 4. Modo DeepSeek Nuvem: Raciocínio profundo a preço reduzido
+  deepseek_cloud:
+    description: "DeepSeek-Reasoner (R1 API) na nuvem + Phi-3.5 Mini ou Qwen Coder local"
+    manager:
+      provider: "deepseek"
+      model: "deepseek/deepseek-reasoner"
+      temperature: 0.2
+    dev_agent:
+      provider: "ollama"
+      model: "qwen2.5-coder:3b"
+      num_ctx: 4096
+      temperature: 0.2
+    embedding:
+      provider: "ollama"
+      model: "nomic-embed-text"
+
+  # 5. Modo MoE Híbrido: Inteligência máxima open-weights distribuída em VRAM + RAM
+  moe_hybrid:
+    description: "DeepSeek-Coder-V2 Lite (16B MoE) distribuído entre RTX 3050 e 16GB RAM"
+    manager:
+      provider: "google"
+      model: "gemini/gemini-2.0-flash"
+    dev_agent:
+      provider: "ollama"
+      model: "deepseek-coder-v2:lite"
+      num_ctx: 4096
+      temperature: 0.2
+    embedding:
+      provider: "ollama"
+      model: "nomic-embed-text"
+
+# Limites de Hardware da RTX 3050 (4096 MiB)
+hardware_guardrails:
+  max_gpu_vram_mb: 4096
+  vram_warning_threshold_mb: 3600
+  default_keep_alive_seconds: 300  # 5 minutos para sessões ágeis

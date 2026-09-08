@@ -1,0 +1,30 @@
+# Definição das Tarefas do Jinsai-G15 v2.2
+
+plan_task:
+  description: >
+    Analise o pedido do usuário: "{user_prompt}".
+    
+    Contexto relevante extraído do projeto pelo RAG Local:
+    {rag_context}
+    
+    Elabore um plano arquitetural enxuto contendo:
+    1. Resumo das mudanças necessárias.
+    2. Lista exata de arquivos a criar, modificar ou refatorar.
+    3. Especificação atômica das funções, classes ou estruturas de dados a serem implementadas.
+    4. Critérios de validação e testes recomendados.
+  expected_output: >
+    Um documento de especificação técnica conciso, em formato Markdown, pronto para guiar o Desenvolvedor Local.
+
+implement_task:
+  description: >
+    Com base no plano elaborado pelo Arquiteto:
+    {architecture_plan}
+    
+    E considerando os trechos de código do projeto:
+    {rag_context}
+    
+    Implemente o código completo e necessário para atender à especificação.
+    Garanta tipagem estática (type hints), tratamento de exceções e documentação inline essencial.
+    Se forem gerados novos arquivos ou patches, formate claramente com blocos de código indicando o caminho de cada arquivo.
+  expected_output: >
+    Código completo e executável para todos os módulos e funções especificados, pronto para gravação em disco.
