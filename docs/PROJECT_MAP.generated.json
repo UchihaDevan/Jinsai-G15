@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": "Jinsai-G15",
+  "version": "3.0",
+  "generated_at": "2026-09-09T19:45:00-03:00",
+  "environment": {
+    "host": "devan-dellg155520",
+    "cpu": "Intel Core i5-12500H (16 threads)",
+    "ram_mb": 15670,
+    "gpu": "NVIDIA GeForce RTX 3050 Mobile (4096 MiB VRAM)",
+    "os": "BigLinux (Linux 6.18-MANJARO)"
+  },
+  "modules": [
+    {
+      "path": "core/vram_manager.py",
+      "exports": [
+        {
+          "name": "VRAMManager",
+          "kind": "class",
+          "line": 20,
+          "methods": [
+            { "name": "__init__", "line": 23 },
+            { "name": "get_gpu_vram_status", "line": 33, "callers": ["run_developer_crew.py:123", "run_developer_crew.py:272"] },
+            { "name": "get_running_ollama_models", "line": 63, "callers": ["run_developer_crew.py:273", "core/vram_manager.py:102", "core/vram_manager.py:132"] },
+            { "name": "unload_model", "line": 80, "callers": ["core/vram_manager.py:105", "core/vram_manager.py:136", "core/vram_manager.py:149"] },
+            { "name": "unload_all", "line": 100, "callers": [] },
+            { "name": "warm_up_model", "line": 109, "callers": ["core/vram_manager.py:147"] },
+            { "name": "scoped_model", "line": 125, "callers": [] }
+          ]
+        }
+      ],
+      "static_imports": ["contextlib", "logging", "shutil", "subprocess", "typing.Generator", "httpx"],
+      "dynamic_invocations": ["subprocess.run(['nvidia-smi', ...])", "httpx.get('{ollama}/api/ps')", "httpx.post('{ollama}/api/generate')"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "media"
+      }
+    },
+    {
+      "path": "core/state_machine.py",
+      "exports": [
+        { "name": "DevelopmentState", "kind": "enum", "line": 10, "callers": ["run_developer_crew.py:97", "run_developer_crew.py:173", "run_developer_crew.py:206", "run_developer_crew.py:229", "run_developer_crew.py:235", "run_developer_crew.py:238", "run_developer_crew.py:240", "tests/test_base.py:133"] },
+        {
+          "name": "DevelopmentStateMachine",
+          "kind": "class",
+          "line": 22,
+          "methods": [
+            { "name": "__init__", "line": 36 },
+            { "name": "transition_to", "line": 42, "callers": ["run_developer_crew.py:97", "run_developer_crew.py:173", "run_developer_crew.py:206", "run_developer_crew.py:229", "run_developer_crew.py:235", "run_developer_crew.py:238", "run_developer_crew.py:240", "tests/test_base.py:137"] },
+            { "name": "can_repair", "line": 57, "callers": ["tests/test_base.py:147"] }
+          ]
+        }
+      ],
+      "static_imports": ["enum.Enum"],
+      "dynamic_invocations": [],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "alta",
+        "runtime": "alta",
+        "contractual": "alta"
+      }
+    },
+    {
+      "path": "core/router.py",
+      "exports": [
+        { "name": "RoutingDecision", "kind": "dataclass", "line": 15 },
+        {
+          "name": "TaskRouter",
+          "kind": "class",
+          "line": 25,
+          "methods": [
+            { "name": "__init__", "line": 47 },
+            { "name": "route", "line": 50, "callers": ["tests/test_base.py:56", "tests/test_base.py:61", "tests/test_base.py:66"] }
+          ]
+        }
+      ],
+      "static_imports": ["logging", "re", "dataclasses.dataclass", "typing.Any"],
+      "dynamic_invocations": [],
+      "dead_imports_in_callers": ["run_developer_crew.py:25 (TaskRouter importado mas nunca invocado)"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "alta",
+        "runtime": "alta",
+        "contractual": "media"
+      }
+    },
+    {
+      "path": "core/rag_engine.py",
+      "exports": [
+        { "name": "calculate_sha256", "kind": "function", "line": 49, "callers": ["core/rag_engine.py:165"] },
+        { "name": "CodeChunk", "kind": "class", "line": 58 },
+        {
+          "name": "LocalCodeRAG",
+          "kind": "class",
+          "line": 80,
+          "methods": [
+            { "name": "__init__", "line": 82 },
+            { "name": "_init_chromadb", "line": 95, "callers": ["core/rag_engine.py:93"] },
+            { "name": "get_embedding", "line": 112, "callers": ["core/rag_engine.py:182", "core/rag_engine.py:207"] },
+            { "name": "_chunk_file", "line": 123, "callers": ["core/rag_engine.py:172"] },
+            { "name": "index_project", "line": 153, "callers": ["run_developer_crew.py:156"] },
+            { "name": "query_relevant_chunks", "line": 202, "callers": ["core/rag_engine.py:236"] },
+            { "name": "format_context_for_llm", "line": 234, "callers": ["run_developer_crew.py:157"] }
+          ]
+        }
+      ],
+      "static_imports": ["hashlib", "json", "logging", "os", "pathlib.Path", "typing.Any", "httpx"],
+      "dynamic_invocations": ["import chromadb (dentro de _init_chromadb)", "httpx.post('{ollama}/api/embeddings')"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "media"
+      }
+    },
+    {
+      "path": "core/errors.py",
+      "exports": [
+        { "name": "JinsaiError", "kind": "exception", "line": 17 },
+        { "name": "OllamaUnavailableError", "kind": "exception", "line": 21 },
+        { "name": "ModelNotFoundError", "kind": "exception", "line": 25 },
+        { "name": "MissingAPIKeyError", "kind": "exception", "line": 29 },
+        { "name": "InvalidProjectPathError", "kind": "exception", "line": 33, "callers": ["core/errors.py:75", "core/errors.py:77"] },
+        { "name": "SecurityViolationError", "kind": "exception", "line": 37, "callers": ["tools/security.py:73", "tools/security.py:79"] },
+        { "name": "CheckpointError", "kind": "exception", "line": 41 },
+        { "name": "verify_ollama_connection", "kind": "function", "line": 45, "callers": ["run_developer_crew.py:113"] },
+        { "name": "verify_model_installed", "kind": "function", "line": 54, "callers": [] },
+        { "name": "verify_cloud_api_keys", "kind": "function", "line": 68, "callers": ["run_developer_crew.py:117"] },
+        { "name": "validate_project_root", "kind": "function", "line": 86, "callers": ["run_developer_crew.py:132"] }
+      ],
+      "static_imports": ["logging", "os", "pathlib.Path", "typing.Any", "httpx"],
+      "dynamic_invocations": ["httpx.get('{ollama}/api/tags')"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "media",
+        "runtime": "media",
+        "contractual": "alta"
+      }
+    },
+    {
+      "path": "tools/security.py",
+      "exports": [
+        { "name": "BLOCKED_PATTERNS", "kind": "constant", "line": 13 },
+        { "name": "BLOCKED_SHELL_PATTERNS", "kind": "constant", "line": 32 },
+        { "name": "is_path_blocked", "kind": "function", "line": 49, "callers": ["tools/security.py:79", "tools/search.py:56", "tools/search.py:74", "tests/test_base.py:87"] },
+        { "name": "validate_safe_path", "kind": "function", "line": 64, "callers": ["tools/filesystem.py:78", "tools/filesystem.py:106", "tools/patching.py:18", "tools/patching.py:38", "tools/patching.py:79", "tools/patching.py:110", "tools/testing.py:19", "tools/testing.py:47", "tests/test_base.py:78"] },
+        { "name": "is_command_safe", "kind": "function", "line": 95, "callers": ["tests/test_base.py:97", "tests/test_base.py:100"] }
+      ],
+      "static_imports": ["fnmatch", "pathlib.Path", "core.errors.SecurityViolationError"],
+      "dynamic_invocations": [],
+      "dead_imports_in_callers": ["tools/testing.py:14 (is_command_safe importado mas nunca chamado no corpo de run_unit_tests)"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "alta",
+        "runtime": "alta",
+        "contractual": "alta"
+      }
+    },
+    {
+      "path": "tools/filesystem.py",
+      "exports": [
+        { "name": "list_project_tree", "kind": "function", "line": 28, "callers": ["run_developer_crew.py:141"] },
+        { "name": "read_file", "kind": "function", "line": 74, "callers": [] },
+        { "name": "get_file_metadata", "kind": "function", "line": 105, "callers": [] },
+        { "name": "read_project_config", "kind": "function", "line": 129, "callers": ["run_developer_crew.py:142"] }
+      ],
+      "static_imports": ["hashlib", "os", "pathlib.Path", "typing.Any", "tools.security.validate_safe_path"],
+      "dynamic_invocations": [],
+      "unconnected_in_orchestrator": ["read_file", "get_file_metadata"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "media"
+      }
+    },
+    {
+      "path": "tools/search.py",
+      "exports": [
+        { "name": "search_code", "kind": "function", "line": 22, "callers": [] }
+      ],
+      "static_imports": ["os", "re", "shutil", "subprocess", "pathlib.Path", "typing.Any", "tools.security.is_path_blocked", "tools.security.validate_safe_path"],
+      "dynamic_invocations": ["subprocess.run(['rg', ...])"],
+      "unconnected_in_orchestrator": ["search_code"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "baixa"
+      }
+    },
+    {
+      "path": "tools/patching.py",
+      "exports": [
+        { "name": "create_file", "kind": "function", "line": 15, "callers": ["tests/test_base.py:109"] },
+        { "name": "replace_range", "kind": "function", "line": 35, "callers": ["tests/test_base.py:116"] },
+        { "name": "apply_patch", "kind": "function", "line": 76, "callers": ["tests/test_base.py:121"] },
+        { "name": "delete_file", "kind": "function", "line": 108, "callers": [] }
+      ],
+      "static_imports": ["difflib", "pathlib.Path", "typing.Any", "tools.security.validate_safe_path"],
+      "dynamic_invocations": [],
+      "unconnected_in_orchestrator": ["create_file", "replace_range", "apply_patch", "delete_file (nenhum conectado como tool do dev_agent em run_developer_crew.py)"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "alta",
+        "runtime": "alta",
+        "contractual": "media"
+      }
+    },
+    {
+      "path": "tools/git.py",
+      "exports": [
+        { "name": "is_git_repository", "kind": "function", "line": 16, "callers": ["tools/git.py:38", "tools/git.py:58", "tools/git.py:73", "tools/git.py:95"] },
+        { "name": "run_git_cmd", "kind": "function", "line": 21, "callers": ["tools/git.py:40", "tools/git.py:43", "tools/git.py:44", "tools/git.py:47", "tools/git.py:60", "tools/git.py:65", "tools/git.py:74", "tools/git.py:97", "tools/git.py:99"] },
+        { "name": "create_checkpoint", "kind": "function", "line": 32, "callers": ["run_developer_crew.py:161"] },
+        { "name": "get_git_diff", "kind": "function", "line": 56, "callers": [] },
+        { "name": "get_git_status", "kind": "function", "line": 70, "callers": [] },
+        { "name": "rollback_checkpoint", "kind": "function", "line": 91, "callers": [] }
+      ],
+      "static_imports": ["logging", "shutil", "subprocess", "pathlib.Path", "typing.Any"],
+      "dynamic_invocations": ["subprocess.run(['git', '-C', ...])"],
+      "dead_imports_in_callers": ["run_developer_crew.py:34 (get_git_diff e rollback_checkpoint importados mas nunca chamados)"],
+      "critical_risk_commands": ["git reset --hard", "git clean -fd"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "baixa"
+      }
+    },
+    {
+      "path": "tools/testing.py",
+      "exports": [
+        { "name": "run_syntax_check", "kind": "function", "line": 18, "callers": [] },
+        { "name": "run_unit_tests", "kind": "function", "line": 35, "callers": ["run_developer_crew.py:232"] }
+      ],
+      "static_imports": ["logging", "os", "shutil", "subprocess", "sys", "pathlib.Path", "typing.Any", "tools.security.is_command_safe", "tools.security.validate_safe_path"],
+      "dynamic_invocations": ["subprocess.run([pytest_cmd, '-v', '--tb=short', ...])", "subprocess.run([sys.executable, '-m', 'py_compile', ...])"],
+      "security_note": "Subprocesso local não isolado; executa código potencialmente arbitrário no ambiente do projeto",
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "baixa",
+        "runtime": "baixa",
+        "contractual": "baixa"
+      }
+    },
+    {
+      "path": "memory/project_memory.py",
+      "exports": [
+        {
+          "name": "ProjectMemory",
+          "kind": "class",
+          "line": 17,
+          "methods": [
+            { "name": "__init__", "line": 20 },
+            { "name": "_ensure_storage", "line": 28, "callers": ["memory/project_memory.py:27"] },
+            { "name": "record_decision", "line": 40, "callers": ["run_developer_crew.py:244", "tests/test_base.py:157"] },
+            { "name": "read_decisions", "line": 64, "callers": ["run_developer_crew.py:148", "tests/test_base.py:167"] },
+            { "name": "save_plan", "line": 70, "callers": [] },
+            { "name": "load_plan", "line": 75, "callers": [] },
+            { "name": "update_task_state", "line": 85, "callers": ["tests/test_base.py:171"] },
+            { "name": "get_task_states", "line": 103, "callers": ["tests/test_base.py:172"] },
+            { "name": "append_log", "line": 112, "callers": ["run_developer_crew.py:250"] }
+          ]
+        }
+      ],
+      "static_imports": ["json", "datetime.datetime", "datetime.timezone", "pathlib.Path", "typing.Any", "yaml"],
+      "dynamic_invocations": [],
+      "unconnected_in_orchestrator": ["save_plan", "load_plan", "update_task_state", "get_task_states"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "alta",
+        "runtime": "alta",
+        "contractual": "alta"
+      }
+    },
+    {
+      "path": "run_developer_crew.py",
+      "exports": [
+        { "name": "load_yaml", "kind": "function", "line": 50, "callers": ["run_developer_crew.py:99", "run_developer_crew.py:100", "run_developer_crew.py:101"] },
+        { "name": "build_crewai_llm", "kind": "function", "line": 59, "callers": ["run_developer_crew.py:176", "run_developer_crew.py:177"] },
+        { "name": "execute_autonomous_cycle", "kind": "function", "line": 89, "callers": ["run_developer_crew.py:303"] },
+        { "name": "main", "kind": "function", "line": 256, "callers": ["run_developer_crew.py:311"] }
+      ],
+      "static_imports": [
+        "argparse", "logging", "os", "sys", "pathlib.Path", "typing.Any", "yaml", "dotenv.load_dotenv",
+        "core.vram_manager.VRAMManager", "core.rag_engine.LocalCodeRAG", "core.router.TaskRouter",
+        "core.errors.validate_project_root", "core.errors.verify_ollama_connection", "core.errors.verify_cloud_api_keys", "core.errors.InvalidProjectPathError",
+        "core.state_machine.DevelopmentStateMachine", "core.state_machine.DevelopmentState",
+        "tools.filesystem.list_project_tree", "tools.filesystem.read_project_config",
+        "tools.git.create_checkpoint", "tools.git.get_git_diff", "tools.git.rollback_checkpoint",
+        "tools.testing.run_unit_tests", "memory.project_memory.ProjectMemory"
+      ],
+      "lazy_imports": ["from crewai import LLM (linha 61)", "from crewai import Agent, Crew, Process, Task (linha 174)"],
+      "dead_imports": ["TaskRouter (linha 25)", "InvalidProjectPathError (linha 30)", "get_git_diff (linha 34)", "rollback_checkpoint (linha 34)"],
+      "confidence": {
+        "structural": "alta",
+        "behavioral": "media",
+        "runtime": "baixa",
+        "contractual": "baixa"
+      }
+    }
+  ]
+}
