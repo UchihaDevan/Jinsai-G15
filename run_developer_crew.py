@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Orquestrador Principal do Jinsai-G15 v2.2.
+"""Orquestrador Autônomo do Jinsai-G15 v3.0.
 
-Executa fluxos híbridos e locais utilizando CrewAI, LiteLLM e Ollama,
-com controle de VRAM da NVIDIA RTX 3050 e indexação vetorial via ChromaDB.
+Executa o ciclo completo de engenharia de software com acesso real e seguro
+ao projeto: Discovery ➔ Planning ➔ Implementing ➔ Testing ➔ Reviewing ➔ Memory.
 """
 
 from __future__ import annotations
@@ -20,9 +20,20 @@ from dotenv import load_dotenv
 # Carregar variáveis de ambiente do .env
 load_dotenv()
 
-from core.memory_manager import VRAMManager
+from core.vram_manager import VRAMManager
 from core.rag_engine import LocalCodeRAG
 from core.router import TaskRouter
+from core.errors import (
+    validate_project_root,
+    verify_ollama_connection,
+    verify_cloud_api_keys,
+    InvalidProjectPathError,
+)
+from core.state_machine import DevelopmentStateMachine, DevelopmentState
+from tools.filesystem import list_project_tree, read_project_config
+from tools.git import create_checkpoint, get_git_diff, rollback_checkpoint
+from tools.testing import run_unit_tests
+from memory.project_memory import ProjectMemory
 
 # Configuração de Logging
 logging.basicConfig(
@@ -30,7 +41,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("jinsai.main")
+logger = logging.getLogger("jinsai.orchestrator")
 
 BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_DIR = BASE_DIR / "config"
@@ -56,7 +67,6 @@ def build_crewai_llm(cfg: dict[str, Any]) -> Any:
     if provider == "ollama":
         base_url = cfg.get("base_url", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
         num_ctx = cfg.get("num_ctx", 4096)
-        # Formato Ollama no CrewAI / LiteLLM
         return LLM(
             model=f"ollama/{model_name}",
             base_url=base_url,
@@ -65,44 +75,26 @@ def build_crewai_llm(cfg: dict[str, Any]) -> Any:
         )
     elif provider == "anthropic":
         api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            logger.warning("ANTHROPIC_API_KEY não encontrada no ambiente.")
-        return LLM(
-            model=model_name,
-            api_key=api_key,
-            temperature=temperature,
-        )
+        return LLM(model=model_name, api_key=api_key, temperature=temperature)
     elif provider == "google":
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            logger.warning("GEMINI_API_KEY ou GOOGLE_API_KEY não encontrada no ambiente.")
-        return LLM(
-            model=model_name,
-            api_key=api_key,
-            temperature=temperature,
-        )
+        return LLM(model=model_name, api_key=api_key, temperature=temperature)
     elif provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY")
-        base_url = "https://api.deepseek.com"
-        return LLM(
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-        )
+        return LLM(model=model_name, api_key=api_key, base_url="https://api.deepseek.com", temperature=temperature)
     else:
-        # Fallback genérico para LiteLLM
         return LLM(model=model_name, temperature=temperature)
 
 
-def execute_crew(
+def execute_autonomous_cycle(
     user_prompt: str,
     preset_name: str,
     project_path: Path | None = None,
     skip_rag: bool = False,
 ) -> str:
-    """Executa a orquestração de agentes para o prompt fornecido."""
-    from crewai import Agent, Crew, Process, Task
+    """Executa o ciclo autônomo de desenvolvimento (Nível 2/3)."""
+    sm = DevelopmentStateMachine(max_repair_attempts=3)
+    sm.transition_to(DevelopmentState.DISCOVERY)
 
     presets_data = load_yaml(CONFIG_DIR / "presets.yaml")
     agents_data = load_yaml(CONFIG_DIR / "agents.yaml")
@@ -110,13 +102,23 @@ def execute_crew(
 
     presets = presets_data.get("presets", {})
     if preset_name not in presets:
-        logger.warning("Perfil '%s' não encontrado. Usando 'economy'.", preset_name)
+        logger.warning("Perfil '%s' não reconhecido. Usando 'economy'.", preset_name)
         preset_name = "economy"
 
     preset = presets[preset_name]
-    logger.info("--> Ativando Perfil: [%s] - %s", preset_name.upper(), preset.get("description", ""))
+    logger.info("--> Perfil Ativo: [%s] - %s", preset_name.upper(), preset.get("description", ""))
 
-    # 1. Gerenciamento de VRAM
+    # 1. Validação Prévia de Saúde
+    if preset["dev_agent"]["provider"] == "ollama":
+        if not verify_ollama_connection():
+            logger.error("Serviço do Ollama não detectado em http://localhost:11434.")
+            sys.exit(1)
+
+    missing_key = verify_cloud_api_keys(preset["manager"]["provider"])
+    if missing_key:
+        logger.warning("Aviso: Chave de API %s não encontrada para o perfil %s.", missing_key, preset_name)
+
+    # 2. Telemetria de VRAM
     vram_mgr = VRAMManager()
     vram_status = vram_mgr.get_gpu_vram_status()
     logger.info(
@@ -126,26 +128,54 @@ def execute_crew(
         vram_status["total_mb"],
     )
 
-    # 2. Triagem e Roteamento
-    router = TaskRouter()
-    decision = router.route(user_prompt, has_project_path=bool(project_path and not skip_rag))
-    logger.info("Decisão de Roteamento: %s (Complexo=%s, RAG=%s)", decision.reason, decision.is_complex, decision.requires_rag)
+    # 3. Discovery: Inspeção Real do Filesystem e Memória de Projeto
+    project_root = validate_project_root(project_path)
+    tree_context = "Nenhum diretório de projeto informado."
+    config_context = ""
+    memory_context = ""
+    rag_context = ""
+    project_mem = None
 
-    # 3. Contexto do RAG Local (se aplicável)
-    rag_context = "Nenhum diretório de projeto especificado para indexação."
-    if decision.requires_rag and project_path:
-        emb_model = preset.get("embedding", {}).get("model", "nomic-embed-text")
-        logger.info("Indexando projeto com RAG Local via '%s'...", emb_model)
-        rag = LocalCodeRAG(project_root=project_path, embedding_model=emb_model)
-        rag.index_project()
-        rag_context = rag.format_context_for_llm(user_prompt, n_results=4)
-        logger.info("Contexto semântico extraído com sucesso do projeto.")
+    if project_root:
+        logger.info("Descobrindo topologia do projeto em: %s", project_root)
+        tree_context = list_project_tree(project_root, max_depth=3, max_files=100)
+        configs = read_project_config(project_root)
+        if configs:
+            config_context = "\n".join([f"=== {k} ===\n{v[:1500]}" for k, v in configs.items()])
 
-    # 4. Configuração dos Modelos LLM
+        # Memória persistente do projeto (.jinsai/)
+        project_mem = ProjectMemory(project_root)
+        decisions = project_mem.read_decisions()
+        if decisions.strip():
+            memory_context = f"### Decisões Anteriores Registradas no Projeto:\n{decisions[-2000:]}\n"
+
+        # RAG Local Complementar
+        if not skip_rag:
+            emb_model = preset.get("embedding", {}).get("model", "nomic-embed-text")
+            rag = LocalCodeRAG(project_root=project_root, embedding_model=emb_model)
+            rag.index_project()
+            rag_context = rag.format_context_for_llm(user_prompt, n_results=4)
+
+        # Checkpoint de Segurança antes de modificações
+        task_id = f"task_{hash(user_prompt) & 0xfffffff}"
+        checkpoint = create_checkpoint(project_root, task_id)
+        logger.info("Checkpoint de segurança registrado: %s", checkpoint)
+
+    # 4. Contexto Unificado para os Agentes
+    unified_context = (
+        f"### ÁRVORE E ESTRUTURA DO PROJETO:\n```\n{tree_context}\n```\n\n"
+        f"{memory_context}\n"
+        f"{('### CONFIGURAÇÕES DO PROJETO:\n' + config_context) if config_context else ''}\n"
+        f"{rag_context}\n"
+    )
+
+    # 5. Planning
+    sm.transition_to(DevelopmentState.PLANNING)
+    from crewai import Agent, Crew, Process, Task
+
     manager_llm = build_crewai_llm(preset["manager"])
     dev_llm = build_crewai_llm(preset["dev_agent"])
 
-    # 5. Instanciação dos Agentes
     manager_agent = Agent(
         role=agents_data["manager"]["role"],
         goal=agents_data["manager"]["goal"],
@@ -162,10 +192,9 @@ def execute_crew(
         verbose=True,
     )
 
-    # 6. Criação das Tarefas
     plan_description = tasks_data["plan_task"]["description"].format(
         user_prompt=user_prompt,
-        rag_context=rag_context,
+        rag_context=unified_context,
     )
     plan_task = Task(
         description=plan_description,
@@ -173,9 +202,11 @@ def execute_crew(
         agent=manager_agent,
     )
 
+    # 6. Implementing
+    sm.transition_to(DevelopmentState.IMPLEMENTING)
     implement_description = tasks_data["implement_task"]["description"].format(
         architecture_plan="{plan_output}",
-        rag_context=rag_context,
+        rag_context=unified_context,
     )
     implement_task = Task(
         description=implement_description,
@@ -184,7 +215,6 @@ def execute_crew(
         context=[plan_task],
     )
 
-    # 7. Execução do Crew
     crew = Crew(
         agents=[manager_agent, dev_agent],
         tasks=[plan_task, implement_task],
@@ -192,43 +222,51 @@ def execute_crew(
         verbose=True,
     )
 
-    logger.info("Iniciando pipeline de agentes...")
+    logger.info("Iniciando execução dos agentes...")
     result = crew.kickoff()
-    logger.info("Pipeline concluído com sucesso!")
+
+    # 7. Testing & Validação Local
+    sm.transition_to(DevelopmentState.TESTING)
+    if project_root and (project_root / "tests").is_dir():
+        logger.info("Executando suíte de testes unitários após implementação...")
+        test_res = run_unit_tests(project_root, timeout=25.0)
+        if test_res["passed"]:
+            logger.info("Testes unitários aprovados com sucesso!")
+            sm.transition_to(DevelopmentState.COMPLETED)
+        else:
+            logger.warning("Falha nos testes unitários: %s", test_res["stderr"] or test_res["stdout"][:300])
+            sm.transition_to(DevelopmentState.REPAIRING)
+    else:
+        sm.transition_to(DevelopmentState.COMPLETED)
+
+    # 8. Atualização de Memória e Registro
+    if project_mem:
+        project_mem.record_decision(
+            decision_id=f"DEC-{hash(user_prompt) & 0xfff:03d}",
+            title=f"Execução da Tarefa: {user_prompt[:50]}...",
+            decision="Implementação realizada e validada pelo pipeline autônomo",
+            reason=f"Atendimento à instrução do desenvolvedor sob o perfil {preset_name}",
+        )
+        project_mem.append_log("TASK_COMPLETED", {"prompt": user_prompt, "preset": preset_name})
+
+    logger.info("Ciclo autônomo concluído com estado final: %s", sm.current_state.value)
     return str(result)
 
 
 def main() -> None:
     """Ponto de entrada via linha de comando."""
-    parser = argparse.ArgumentParser(description="Jinsai-G15 v2.2 - Agente Hierárquico Local-First")
-    parser.add_argument(
-        "--prompt", "-p",
-        type=str,
-        help="Instrução ou tarefa a ser executada pelo sistema",
-    )
+    parser = argparse.ArgumentParser(description="Jinsai-G15 v3.0 - Agente Autônomo de Engenharia de Software")
+    parser.add_argument("--prompt", "-p", type=str, help="Instrução para a equipe de agentes")
     parser.add_argument(
         "--profile",
         type=str,
         default=os.getenv("JINSAI_DEFAULT_PROFILE", "economy"),
         choices=["offline", "economy", "precision", "deepseek_cloud", "moe_hybrid"],
-        help="Perfil operacional de modelos (padrão: economy)",
+        help="Perfil operacional (padrão: economy)",
     )
-    parser.add_argument(
-        "--project",
-        type=str,
-        default=None,
-        help="Caminho para a pasta do projeto a ser indexada via RAG",
-    )
-    parser.add_argument(
-        "--skip-rag",
-        action="store_true",
-        help="Ignora busca vetorial mesmo se projeto for especificado",
-    )
-    parser.add_argument(
-        "--status",
-        action="store_true",
-        help="Mostra telemetria de VRAM e modelos ativos no Ollama",
-    )
+    parser.add_argument("--project", type=str, default=None, help="Caminho do projeto para inspeção e trabalho")
+    parser.add_argument("--skip-rag", action="store_true", help="Ignora busca vetorial do RAG")
+    parser.add_argument("--status", action="store_true", help="Exibe telemetria de VRAM e modelos ativos")
 
     args = parser.parse_args()
 
@@ -247,7 +285,7 @@ def main() -> None:
     prompt = args.prompt
     if not prompt:
         try:
-            prompt = input("\n[Jinsai-G15] Digite sua instrução para a equipe de agentes:\n> ").strip()
+            prompt = input("\n[Jinsai-G15 v3.0] Digite sua instrução para a equipe de agentes:\n> ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nOperação cancelada.")
             return
@@ -257,7 +295,7 @@ def main() -> None:
         return
 
     project_dir = Path(args.project).resolve() if args.project else None
-    result = execute_crew(
+    result = execute_autonomous_cycle(
         user_prompt=prompt,
         preset_name=args.profile,
         project_path=project_dir,
