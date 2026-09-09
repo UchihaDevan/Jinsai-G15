@@ -36,18 +36,25 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     if is_git_repository(root):
-        # Cria commit ou tag de checkpoint no git
+        # Verifica se há alterações não commitadas
         code, out, _ = run_git_cmd(root, ["status", "--porcelain"])
         if code == 0 and out.strip():
-            # Há arquivos modificados antes da tarefa; faz stash ou checkpoint de segurança
-            run_git_cmd(root, ["add", "-A"])
-            run_git_cmd(root, ["commit", "-m", f"[jinsai-checkpoint] Pre-task {task_id}"])
+            raise RuntimeError(
+                "A working tree do Git não está limpa. "
+                "O Jinsai exige um repositório sem alterações pendentes "
+                "para garantir a segurança dos seus dados."
+            )
 
-        # Salva o commit hash atual
-        code, commit_hash, _ = run_git_cmd(root, ["rev-parse", "HEAD"])
-        if code == 0:
-            (checkpoint_dir / "commit.txt").write_text(commit_hash.strip(), encoding="utf-8")
-            return {"type": "git", "commit": commit_hash.strip(), "task_id": task_id}
+        # Salva a branch atual para o rollback
+        code, current_branch, _ = run_git_cmd(root, ["branch", "--show-current"])
+        original_branch = current_branch.strip() or "main"
+        (checkpoint_dir / "original_branch.txt").write_text(original_branch, encoding="utf-8")
+
+        # Cria uma branch temporária para isolar a tarefa
+        branch_name = f"jinsai-task-{task_id}"
+        run_git_cmd(root, ["checkout", "-b", branch_name])
+
+        return {"type": "git", "branch": branch_name, "task_id": task_id}
 
     # Fallback: snapshot simples em diretório .jinsai/checkpoints/
     return {"type": "snapshot", "task_id": task_id, "checkpoint_path": str(checkpoint_dir)}
@@ -57,6 +64,9 @@ def get_git_diff(project_root: Path) -> str:
     """Retorna o git diff atual das modificações do projeto."""
     root = project_root.resolve()
     if is_git_repository(root):
+        # Intent to add para garantir que novos arquivos apareçam no diff
+        run_git_cmd(root, ["add", "-N", "."])
+        
         code, out, _ = run_git_cmd(root, ["diff"])
         if code == 0 and out:
             return out
@@ -97,13 +107,18 @@ def rollback_checkpoint(project_root: Path, task_id: str) -> bool:
     root = project_root.resolve()
     checkpoint_dir = root / ".jinsai" / "checkpoints" / task_id
 
-    if is_git_repository(root) and (checkpoint_dir / "commit.txt").exists():
-        commit_hash = (checkpoint_dir / "commit.txt").read_text(encoding="utf-8").strip()
-        code, _, err = run_git_cmd(root, ["reset", "--hard", commit_hash])
-        # Limpa untracked files criados durante a tarefa
-        run_git_cmd(root, ["clean", "-fd"])
+    if is_git_repository(root) and (checkpoint_dir / "original_branch.txt").exists():
+        original_branch = (checkpoint_dir / "original_branch.txt").read_text(encoding="utf-8").strip()
+        
+        # O agente pode ter deixado arquivos pendentes, então resetamos as modificações da branch da tarefa
+        run_git_cmd(root, ["reset", "--hard", "HEAD"])
+        
+        # Retorna para a branch original
+        code, _, err = run_git_cmd(root, ["checkout", original_branch])
         if code == 0:
-            logger.info("Rollback via Git para commit '%s' concluído com sucesso.", commit_hash)
+            # Tenta apagar a branch da tarefa
+            run_git_cmd(root, ["branch", "-D", f"jinsai-task-{task_id}"])
+            logger.info("Rollback Git concluído: retornou para branch '%s'.", original_branch)
             return True
         logger.error("Falha ao executar rollback Git: %s", err)
 

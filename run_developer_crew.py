@@ -157,7 +157,9 @@ def execute_autonomous_cycle(
             rag_context = rag.format_context_for_llm(user_prompt, n_results=4)
 
         # Checkpoint de Segurança antes de modificações
-        task_id = f"task_{hash(user_prompt) & 0xfffffff}"
+        import hashlib
+        task_id_hash = hashlib.sha256(user_prompt.encode()).hexdigest()[:8]
+        task_id = f"task_{task_id_hash}"
         checkpoint = create_checkpoint(project_root, task_id)
         logger.info("Checkpoint de segurança registrado: %s", checkpoint)
 
@@ -172,6 +174,14 @@ def execute_autonomous_cycle(
     # 5. Planning
     sm.transition_to(DevelopmentState.PLANNING)
     from crewai import Agent, Crew, Process, Task
+    from pydantic import BaseModel, Field
+    from tools.crew_wrappers import ListProjectTreeTool, ReadFileTool, SearchCodeTool, ApplyPatchTool, GitDiffTool
+
+    class TaskPlan(BaseModel):
+        project: str = Field(description="Nome ou contexto do projeto")
+        assumptions: list[str] = Field(description="Premissas assumidas pelo planejamento")
+        constraints: list[str] = Field(description="Restrições de hardware, software ou regras")
+        tasks: list[dict[str, str]] = Field(description="Lista de tarefas (id, description, files)")
 
     manager_llm = build_crewai_llm(preset["manager"])
     dev_llm = build_crewai_llm(preset["dev_agent"])
@@ -184,11 +194,22 @@ def execute_autonomous_cycle(
         verbose=True,
     )
 
+    dev_tools = []
+    if project_root:
+        dev_tools = [
+            ListProjectTreeTool(project_root=project_root),
+            ReadFileTool(project_root=project_root),
+            SearchCodeTool(project_root=project_root),
+            ApplyPatchTool(project_root=project_root),
+            GitDiffTool(project_root=project_root)
+        ]
+
     dev_agent = Agent(
         role=agents_data["developer"]["role"],
         goal=agents_data["developer"]["goal"],
         backstory=agents_data["developer"]["backstory"],
         llm=dev_llm,
+        tools=dev_tools,
         verbose=True,
     )
 
@@ -200,6 +221,7 @@ def execute_autonomous_cycle(
         description=plan_description,
         expected_output=tasks_data["plan_task"]["expected_output"],
         agent=manager_agent,
+        output_pydantic=TaskPlan,
     )
 
     # 6. Implementing
@@ -227,27 +249,56 @@ def execute_autonomous_cycle(
 
     # 7. Testing & Validação Local
     sm.transition_to(DevelopmentState.TESTING)
-    if project_root and (project_root / "tests").is_dir():
-        logger.info("Executando suíte de testes unitários após implementação...")
-        test_res = run_unit_tests(project_root, timeout=25.0)
-        if test_res["passed"]:
-            logger.info("Testes unitários aprovados com sucesso!")
-            sm.transition_to(DevelopmentState.COMPLETED)
+    tests_passed = True
+    diff_text = "Nenhuma alteração Git rastreada."
+    
+    if project_root:
+        diff_text = get_git_diff(project_root)
+        if diff_text and diff_text != "Nenhuma alteração Git rastreada.":
+            logger.info("Diff após implementação:\n%s", diff_text)
         else:
-            logger.warning("Falha nos testes unitários: %s", test_res["stderr"] or test_res["stdout"][:300])
-            sm.transition_to(DevelopmentState.REPAIRING)
+            logger.info("Nenhum arquivo foi alterado pelo agente.")
+
+        if (project_root / "tests").is_dir():
+            logger.info("Executando suíte de testes unitários após implementação...")
+            test_res = run_unit_tests(project_root, timeout=25.0)
+            if test_res["passed"]:
+                logger.info("Testes unitários aprovados com sucesso!")
+                sm.transition_to(DevelopmentState.COMPLETED)
+            else:
+                logger.warning("Falha nos testes unitários: %s", test_res["stderr"] or test_res["stdout"][:300])
+                tests_passed = False
+                sm.transition_to(DevelopmentState.REPAIRING)
+                logger.error("Repair loop será implementado em fase posterior. Marcando como BLOCKED.")
+                sm.transition_to(DevelopmentState.BLOCKED)
+        else:
+            sm.transition_to(DevelopmentState.COMPLETED)
     else:
         sm.transition_to(DevelopmentState.COMPLETED)
 
     # 8. Atualização de Memória e Registro
     if project_mem:
+        # Salva o plano validado
+        if plan_task.output and getattr(plan_task.output, "pydantic", None):
+            try:
+                project_mem.save_plan(plan_task.output.pydantic.model_dump())
+            except Exception as e:
+                logger.error("Falha ao salvar o plano estruturado: %s", e)
+
+        has_changes = diff_text and diff_text != "Nenhuma alteração Git rastreada."
+        if tests_passed and has_changes:
+            decision_msg = f"Implementação validada com alterações reais.\nResumo Diff:\n{diff_text[:1000]}"
+        else:
+            decision_msg = "Nenhum arquivo foi modificado com sucesso ou testes falharam."
+
         project_mem.record_decision(
-            decision_id=f"DEC-{hash(user_prompt) & 0xfff:03d}",
-            title=f"Execução da Tarefa: {user_prompt[:50]}...",
-            decision="Implementação realizada e validada pelo pipeline autônomo",
-            reason=f"Atendimento à instrução do desenvolvedor sob o perfil {preset_name}",
+            decision_id=f"DEC-{task_id_hash[:4]}",
+            title=f"Execução: {user_prompt[:50]}...",
+            decision=decision_msg,
+            reason=f"Atendimento sob o perfil {preset_name}",
         )
-        project_mem.append_log("TASK_COMPLETED", {"prompt": user_prompt, "preset": preset_name})
+        final_log_state = "TASK_COMPLETED" if tests_passed else "TASK_BLOCKED"
+        project_mem.append_log(final_log_state, {"prompt": user_prompt, "preset": preset_name})
 
     logger.info("Ciclo autônomo concluído com estado final: %s", sm.current_state.value)
     return str(result)
