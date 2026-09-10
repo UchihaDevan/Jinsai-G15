@@ -30,18 +30,9 @@ class ProjectMemory:
         self._ensure_storage()
 
     def _ensure_storage(self) -> None:
-        """Garante a existência do diretório .jinsai, arquivos base e gitignore."""
+        """Garante a existência do diretório .jinsai e arquivos base."""
         self.jinsai_dir.mkdir(parents=True, exist_ok=True)
         
-        # Garante que a memória não suje o repositório Git
-        gitignore_path = self.project_root / ".gitignore"
-        gitignore_content = ""
-        if gitignore_path.exists():
-            gitignore_content = gitignore_path.read_text(encoding="utf-8")
-        if ".jinsai/" not in gitignore_content:
-            with open(gitignore_path, "a", encoding="utf-8") as f:
-                f.write("\n# Jinsai Agent Memory\n.jinsai/\n")
-
         if not self.decisions_file.exists():
             self.decisions_file.write_text(
                 "# Memória de Decisões Arquiteturais do Projeto\n\n"

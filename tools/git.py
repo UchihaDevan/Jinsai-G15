@@ -33,17 +33,21 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
     """Cria um checkpoint antes de modificar arquivos na tarefa."""
     root = project_root.resolve()
     checkpoint_dir = root / ".jinsai" / "checkpoints" / task_id
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     if is_git_repository(root):
-        # Verifica se há alterações não commitadas
+        # Verifica se há alterações não commitadas ANTES de criar diretórios
         code, out, _ = run_git_cmd(root, ["status", "--porcelain"])
-        if code == 0 and out.strip():
+        
+        # Filtra o diretório .jinsai para evitar falso-positivo se o usuário não o ignorou
+        out_filtered = [line for line in out.splitlines() if not line[3:].startswith(".jinsai/")]
+        if code == 0 and out_filtered:
             raise RuntimeError(
                 "A working tree do Git não está limpa. "
                 "O Jinsai exige um repositório sem alterações pendentes "
                 "para garantir a segurança dos seus dados."
             )
+
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # Salva a branch atual para o rollback
         code, current_branch, _ = run_git_cmd(root, ["branch", "--show-current"])
@@ -142,9 +146,22 @@ def rollback_checkpoint(project_root: Path, task_id: str) -> bool:
         code, current_branch, _ = run_git_cmd(root, ["branch", "--show-current"])
         
         if current_branch.strip() == expected_task_branch:
-            # O agente pode ter deixado arquivos não rastreados que sujariam a branch original,
-            # limpamos o working tree DA BRANCH DA TAREFA antes do checkout, garantindo segurança
-            run_git_cmd(root, ["reset", "--hard", "HEAD"])
+            # Verifica se o HEAD mudou em relação ao commit base
+            code, current_commit, _ = run_git_cmd(root, ["rev-parse", "HEAD"])
+            base_commit = ""
+            if (checkpoint_dir / "base_commit.txt").exists():
+                base_commit = (checkpoint_dir / "base_commit.txt").read_text(encoding="utf-8").strip()
+            
+            if current_commit.strip() == base_commit:
+                # O agente não comitou nada novo, apenas deixou arquivos sujos.
+                # Limpamos o working tree da branch da tarefa antes do checkout.
+                run_git_cmd(root, ["reset", "--hard", "HEAD"])
+                logger.info("Rollback executou reset --hard para limpar modificações não commitadas.")
+            else:
+                logger.warning("Rollback pulou o 'reset --hard': a branch da tarefa possui commits inesperados.")
+                # Se não podemos resetar, fazemos checkout da original mas os arquivos modificados
+                # da tarefa vão conflitar. Fazemos reset para limpar e permitir o checkout.
+                # Mas como a política pede restrição, tentamos checkout normal.
         else:
             logger.warning("Rollback ignorou o 'reset --hard': não estamos na branch da tarefa esperada.")
         
