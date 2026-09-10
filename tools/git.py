@@ -49,12 +49,23 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
         code, current_branch, _ = run_git_cmd(root, ["branch", "--show-current"])
         original_branch = current_branch.strip() or "main"
         (checkpoint_dir / "original_branch.txt").write_text(original_branch, encoding="utf-8")
+        
+        # Salva o commit base atual
+        code, base_commit, _ = run_git_cmd(root, ["rev-parse", "HEAD"])
+        if code == 0:
+            (checkpoint_dir / "base_commit.txt").write_text(base_commit.strip(), encoding="utf-8")
+
+        # Salva timestamp de criação
+        from datetime import datetime, timezone
+        (checkpoint_dir / "created_at.txt").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
 
         # Cria uma branch temporária para isolar a tarefa
         branch_name = f"jinsai-task-{task_id}"
         code, _, err = run_git_cmd(root, ["checkout", "-b", branch_name])
         if code != 0:
             raise RuntimeError(f"Falha ao criar branch da tarefa '{branch_name}': {err}")
+            
+        (checkpoint_dir / "task_branch.txt").write_text(branch_name, encoding="utf-8")
 
         return {"type": "git", "branch": branch_name, "task_id": task_id}
 
@@ -63,7 +74,8 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
 
 
 def get_git_diff(project_root: Path) -> str:
-    """Retorna o git diff atual, incluindo conteúdo de novos arquivos."""
+    """Retorna o git diff atual, incluindo conteúdo de novos arquivos permitidos."""
+    from tools.security import is_path_blocked
     root = project_root.resolve()
     if is_git_repository(root):
         # Diff dos arquivos modificados rastreados
@@ -75,8 +87,10 @@ def get_git_diff(project_root: Path) -> str:
         code_ut, untracked_files, _ = run_git_cmd(root, ["ls-files", "--others", "--exclude-standard"])
         if code_ut == 0 and untracked_files.strip():
             for f in untracked_files.strip().splitlines():
+                if is_path_blocked(f):
+                    continue
                 filepath = root / f
-                if filepath.is_file():
+                if filepath.is_file() and filepath.stat().st_size < 50000:
                     try:
                         content = filepath.read_text(encoding="utf-8")
                         diff_text += f"\n--- /dev/null\n+++ b/{f}\n@@ -0,0 +1,{len(content.splitlines())} @@\n"
@@ -116,24 +130,31 @@ def get_git_status(project_root: Path) -> dict[str, list[str]]:
 
 
 def rollback_checkpoint(project_root: Path, task_id: str) -> bool:
-    """Restaura o estado do projeto para o ponto anterior à tarefa."""
+    """Restaura o estado do projeto retornando à branch original de forma segura."""
     root = project_root.resolve()
     checkpoint_dir = root / ".jinsai" / "checkpoints" / task_id
 
     if is_git_repository(root) and (checkpoint_dir / "original_branch.txt").exists():
         original_branch = (checkpoint_dir / "original_branch.txt").read_text(encoding="utf-8").strip()
+        expected_task_branch = f"jinsai-task-{task_id}"
         
-        # O agente pode ter deixado arquivos não rastreados que sujariam a branch original,
-        # então limpamos o working tree da branch da tarefa antes do checkout
-        run_git_cmd(root, ["reset", "--hard", "HEAD"])
+        # Verifica se ainda estamos na branch correta da tarefa
+        code, current_branch, _ = run_git_cmd(root, ["branch", "--show-current"])
+        
+        if current_branch.strip() == expected_task_branch:
+            # O agente pode ter deixado arquivos não rastreados que sujariam a branch original,
+            # limpamos o working tree DA BRANCH DA TAREFA antes do checkout, garantindo segurança
+            run_git_cmd(root, ["reset", "--hard", "HEAD"])
+        else:
+            logger.warning("Rollback ignorou o 'reset --hard': não estamos na branch da tarefa esperada.")
         
         # Retorna para a branch original
         code, _, err = run_git_cmd(root, ["checkout", original_branch])
         if code == 0:
             logger.info(
                 "Rollback Git concluído: retornou para branch '%s'. "
-                "A branch da tarefa 'jinsai-task-%s' foi preservada para inspeção manual.", 
-                original_branch, task_id
+                "A branch da tarefa '%s' foi preservada para inspeção manual.", 
+                original_branch, expected_task_branch
             )
             return True
         logger.error("Falha ao executar rollback Git: %s", err)

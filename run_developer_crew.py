@@ -143,6 +143,15 @@ def execute_autonomous_cycle(
         if configs:
             config_context = "\n".join([f"=== {k} ===\n{v[:1500]}" for k, v in configs.items()])
 
+        # Checkpoint de Segurança e Criação de Branch (antes de sujar a working tree)
+        import hashlib
+        from datetime import datetime
+        task_id_hash = hashlib.sha256(user_prompt.encode()).hexdigest()[:8]
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        task_id = f"task_{timestamp}_{task_id_hash}"
+        checkpoint = create_checkpoint(project_root, task_id)
+        logger.info("Checkpoint de segurança registrado: %s", checkpoint)
+
         # Memória persistente do projeto (.jinsai/)
         project_mem = ProjectMemory(project_root)
         decisions = project_mem.read_decisions()
@@ -155,15 +164,6 @@ def execute_autonomous_cycle(
             rag = LocalCodeRAG(project_root=project_root, embedding_model=emb_model)
             rag.index_project()
             rag_context = rag.format_context_for_llm(user_prompt, n_results=4)
-
-        # Checkpoint de Segurança antes de modificações
-        import hashlib
-        from datetime import datetime
-        task_id_hash = hashlib.sha256(user_prompt.encode()).hexdigest()[:8]
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        task_id = f"task_{timestamp}_{task_id_hash}"
-        checkpoint = create_checkpoint(project_root, task_id)
-        logger.info("Checkpoint de segurança registrado: %s", checkpoint)
 
     # 4. Contexto Unificado para os Agentes
     unified_context = (
@@ -297,15 +297,20 @@ def execute_autonomous_cycle(
         else:
             logger.info("Nenhum diretório de testes encontrado. Executando validação sintática (compileall)...")
             import subprocess
-            res = subprocess.run(["python3", "-m", "compileall", "-q", "."], cwd=project_root)
-            if res.returncode == 0:
-                logger.info("Validação sintática aprovada.")
-                sm.transition_to(DevelopmentState.COMPLETED)
-            else:
-                logger.warning("Falha na validação sintática!")
+            try:
+                res = subprocess.run(["python3", "-m", "compileall", "-q", "."], cwd=project_root, timeout=30.0)
+                if res.returncode == 0:
+                    logger.info("Validação sintática aprovada.")
+                    sm.transition_to(DevelopmentState.COMPLETED)
+                else:
+                    logger.warning("Falha na validação sintática!")
+                    tests_passed = False
+                    sm.transition_to(DevelopmentState.REPAIRING)
+                    logger.error("Repair loop ausente. Marcando como BLOCKED.")
+                    sm.transition_to(DevelopmentState.BLOCKED)
+            except subprocess.TimeoutExpired:
+                logger.error("Timeout na validação sintática (30s). Marcando como BLOCKED.")
                 tests_passed = False
-                sm.transition_to(DevelopmentState.REPAIRING)
-                logger.error("Repair loop ausente. Marcando como BLOCKED.")
                 sm.transition_to(DevelopmentState.BLOCKED)
     else:
         sm.transition_to(DevelopmentState.COMPLETED)
@@ -336,7 +341,16 @@ def execute_autonomous_cycle(
         project_mem.update_task_state(task_id, "COMPLETED" if tests_passed else "BLOCKED")
 
     logger.info("Ciclo autônomo concluído com estado final: %s", sm.current_state.value)
-    return str(result)
+    
+    return {
+        "task_id": task_id,
+        "final_state": sm.current_state.value,
+        "branch": f"jinsai-task-{task_id}" if project_root else None,
+        "tests_passed": tests_passed,
+        "diff": diff_text if tests_passed else None,
+        "crewai_output": str(result),
+        "plan_saved": bool(plan_task.output and getattr(plan_task.output, "pydantic", None))
+    }
 
 
 def main() -> None:
@@ -389,7 +403,10 @@ def main() -> None:
     )
 
     print("\n================ RESULTADO FINAL ================\n")
-    print(result)
+    import json
+    # Printa o JSON do resultado mas esconde o diff gigante se não houver erro
+    summary = {k: v for k, v in result.items() if k != "crewai_output"}
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
     print("\n=================================================\n")
 
 
