@@ -18,13 +18,18 @@ plan_task:
 implement_task:
   description: >
     Com base no plano elaborado pelo Arquiteto:
+    Execute o seguinte plano de arquitetura:
     {architecture_plan}
-    
-    E considerando os trechos de código do projeto:
+
+    Contexto da base de código:
     {rag_context}
-    
-    Implemente o código completo e necessário para atender à especificação.
-    Garanta tipagem estática (type hints), tratamento de exceções e documentação inline essencial.
-    Se forem gerados novos arquivos ou patches, formate claramente com blocos de código indicando o caminho de cada arquivo.
+
+    Regras Operacionais:
+    1. Nunca retorne código textual como resposta. Você DEVE usar a ferramenta `apply_patch` ou `create_file` para modificar o projeto.
+    2. Antes de alterar um arquivo existente, você DEVE usar a ferramenta `read_file` para ler o conteúdo exato.
+    3. Para usar `apply_patch`, o `target_content` deve ser uma correspondência exata do texto atual.
+    4. Teste ou analise seu patch mentalmente antes de aplicar.
+    5. Finalize a tarefa apenas após confirmar que a ferramenta reportou sucesso.
+
   expected_output: >
-    Código completo e executável para todos os módulos e funções especificados, pronto para gravação em disco.
+    Um resumo das alterações realizadas nos arquivos via tools, detalhando quais arquivos foram modificados e como.

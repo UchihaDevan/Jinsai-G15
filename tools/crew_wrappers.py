@@ -9,7 +9,7 @@ from crewai.tools import BaseTool
 
 from tools.filesystem import list_project_tree, read_file
 from tools.search import search_code
-from tools.patching import apply_patch
+from tools.patching import apply_patch, create_file
 from tools.git import get_git_diff
 
 
@@ -100,6 +100,27 @@ class ApplyPatchTool(BaseTool):
             return f"Patch aplicado com sucesso em {relative_path}!"
         return f"Falha no patch: {res.get('error')}"
 
+
+class CreateFileArgs(BaseModel):
+    relative_path: str = Field(..., description="Caminho relativo do arquivo (ex: src/novo_arquivo.py)")
+    content: str = Field(..., description="Conteúdo completo do arquivo a ser criado")
+    overwrite: bool = Field(False, description="Sobrescrever caso o arquivo já exista")
+
+class CreateFileTool(BaseTool):
+    name: str = "create_file"
+    description: str = "Cria um novo arquivo no projeto. Use isto apenas para arquivos novos."
+    args_schema: Type[BaseModel] = CreateFileArgs
+    _project_root: Path = PrivateAttr()
+
+    def __init__(self, project_root: Path, **kwargs: Any):
+        super().__init__(**kwargs)
+        self._project_root = project_root
+
+    def _run(self, relative_path: str, content: str, overwrite: bool = False) -> str:
+        res = create_file(self._project_root, relative_path, content, overwrite)
+        if res.get("success"):
+            return f"Arquivo criado com sucesso em {relative_path}!"
+        return f"Falha ao criar arquivo: {res.get('error')}"
 
 class GitDiffArgs(BaseModel):
     pass

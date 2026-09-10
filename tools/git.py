@@ -52,7 +52,9 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
 
         # Cria uma branch temporária para isolar a tarefa
         branch_name = f"jinsai-task-{task_id}"
-        run_git_cmd(root, ["checkout", "-b", branch_name])
+        code, _, err = run_git_cmd(root, ["checkout", "-b", branch_name])
+        if code != 0:
+            raise RuntimeError(f"Falha ao criar branch da tarefa '{branch_name}': {err}")
 
         return {"type": "git", "branch": branch_name, "task_id": task_id}
 
@@ -61,19 +63,30 @@ def create_checkpoint(project_root: Path, task_id: str) -> dict[str, Any]:
 
 
 def get_git_diff(project_root: Path) -> str:
-    """Retorna o git diff atual das modificações do projeto."""
+    """Retorna o git diff atual, incluindo conteúdo de novos arquivos."""
     root = project_root.resolve()
     if is_git_repository(root):
-        # Intent to add para garantir que novos arquivos apareçam no diff
-        run_git_cmd(root, ["add", "-N", "."])
-        
+        # Diff dos arquivos modificados rastreados
         code, out, _ = run_git_cmd(root, ["diff"])
-        if code == 0 and out:
-            return out
-        # Verifica staged
-        code, out, _ = run_git_cmd(root, ["diff", "--cached"])
-        if code == 0 and out:
-            return out
+        code_staged, out_staged, _ = run_git_cmd(root, ["diff", "--cached"])
+        diff_text = (out or "") + "\n" + (out_staged or "")
+        
+        # Lê os arquivos untracked (não rastreados) para anexar ao diff
+        code_ut, untracked_files, _ = run_git_cmd(root, ["ls-files", "--others", "--exclude-standard"])
+        if code_ut == 0 and untracked_files.strip():
+            for f in untracked_files.strip().splitlines():
+                filepath = root / f
+                if filepath.is_file():
+                    try:
+                        content = filepath.read_text(encoding="utf-8")
+                        diff_text += f"\n--- /dev/null\n+++ b/{f}\n@@ -0,0 +1,{len(content.splitlines())} @@\n"
+                        diff_text += "".join([f"+{line}\n" for line in content.splitlines()])
+                    except Exception:
+                        pass # ignora arquivos binários ou de erro na leitura
+
+        if diff_text.strip():
+            return diff_text.strip()
+            
     return "Nenhuma alteração Git rastreada."
 
 
@@ -110,15 +123,18 @@ def rollback_checkpoint(project_root: Path, task_id: str) -> bool:
     if is_git_repository(root) and (checkpoint_dir / "original_branch.txt").exists():
         original_branch = (checkpoint_dir / "original_branch.txt").read_text(encoding="utf-8").strip()
         
-        # O agente pode ter deixado arquivos pendentes, então resetamos as modificações da branch da tarefa
+        # O agente pode ter deixado arquivos não rastreados que sujariam a branch original,
+        # então limpamos o working tree da branch da tarefa antes do checkout
         run_git_cmd(root, ["reset", "--hard", "HEAD"])
         
         # Retorna para a branch original
         code, _, err = run_git_cmd(root, ["checkout", original_branch])
         if code == 0:
-            # Tenta apagar a branch da tarefa
-            run_git_cmd(root, ["branch", "-D", f"jinsai-task-{task_id}"])
-            logger.info("Rollback Git concluído: retornou para branch '%s'.", original_branch)
+            logger.info(
+                "Rollback Git concluído: retornou para branch '%s'. "
+                "A branch da tarefa 'jinsai-task-%s' foi preservada para inspeção manual.", 
+                original_branch, task_id
+            )
             return True
         logger.error("Falha ao executar rollback Git: %s", err)
 

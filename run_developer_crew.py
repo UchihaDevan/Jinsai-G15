@@ -158,8 +158,10 @@ def execute_autonomous_cycle(
 
         # Checkpoint de Segurança antes de modificações
         import hashlib
+        from datetime import datetime
         task_id_hash = hashlib.sha256(user_prompt.encode()).hexdigest()[:8]
-        task_id = f"task_{task_id_hash}"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        task_id = f"task_{timestamp}_{task_id_hash}"
         checkpoint = create_checkpoint(project_root, task_id)
         logger.info("Checkpoint de segurança registrado: %s", checkpoint)
 
@@ -173,15 +175,29 @@ def execute_autonomous_cycle(
 
     # 5. Planning
     sm.transition_to(DevelopmentState.PLANNING)
+    if project_mem:
+        project_mem.append_log("TASK_PLANNED", {"prompt": user_prompt})
+        project_mem.update_task_state(task_id, "PLANNED")
     from crewai import Agent, Crew, Process, Task
     from pydantic import BaseModel, Field
-    from tools.crew_wrappers import ListProjectTreeTool, ReadFileTool, SearchCodeTool, ApplyPatchTool, GitDiffTool
+    from tools.crew_wrappers import (
+        ListProjectTreeTool, ReadFileTool, SearchCodeTool, 
+        ApplyPatchTool, GitDiffTool, CreateFileTool
+    )
+
+    class TaskSpec(BaseModel):
+        id: str = Field(description="ID único da tarefa")
+        description: str = Field(description="Descrição clara do que deve ser feito")
+        files: list[str] = Field(description="Lista de caminhos de arquivos a serem alterados ou criados")
+        dependencies: list[str] = Field(description="IDs de tarefas que devem ser concluídas antes")
+        acceptance_criteria: list[str] = Field(description="Critérios para considerar a tarefa concluída")
+        validation_commands: list[str] = Field(description="Comandos de shell para validar a tarefa (opcional)")
 
     class TaskPlan(BaseModel):
         project: str = Field(description="Nome ou contexto do projeto")
         assumptions: list[str] = Field(description="Premissas assumidas pelo planejamento")
         constraints: list[str] = Field(description="Restrições de hardware, software ou regras")
-        tasks: list[dict[str, str]] = Field(description="Lista de tarefas (id, description, files)")
+        tasks: list[TaskSpec] = Field(description="Lista estruturada de tarefas a executar")
 
     manager_llm = build_crewai_llm(preset["manager"])
     dev_llm = build_crewai_llm(preset["dev_agent"])
@@ -201,6 +217,7 @@ def execute_autonomous_cycle(
             ReadFileTool(project_root=project_root),
             SearchCodeTool(project_root=project_root),
             ApplyPatchTool(project_root=project_root),
+            CreateFileTool(project_root=project_root),
             GitDiffTool(project_root=project_root)
         ]
 
@@ -226,6 +243,9 @@ def execute_autonomous_cycle(
 
     # 6. Implementing
     sm.transition_to(DevelopmentState.IMPLEMENTING)
+    if project_mem:
+        project_mem.append_log("TASK_IMPLEMENTING", {"prompt": user_prompt})
+        project_mem.update_task_state(task_id, "IN_PROGRESS")
     implement_description = tasks_data["implement_task"]["description"].format(
         architecture_plan="{plan_output}",
         rag_context=unified_context,
@@ -249,6 +269,9 @@ def execute_autonomous_cycle(
 
     # 7. Testing & Validação Local
     sm.transition_to(DevelopmentState.TESTING)
+    if project_mem:
+        project_mem.append_log("TASK_TESTING", {"prompt": user_prompt})
+        project_mem.update_task_state(task_id, "TESTING")
     tests_passed = True
     diff_text = "Nenhuma alteração Git rastreada."
     
@@ -272,7 +295,18 @@ def execute_autonomous_cycle(
                 logger.error("Repair loop será implementado em fase posterior. Marcando como BLOCKED.")
                 sm.transition_to(DevelopmentState.BLOCKED)
         else:
-            sm.transition_to(DevelopmentState.COMPLETED)
+            logger.info("Nenhum diretório de testes encontrado. Executando validação sintática (compileall)...")
+            import subprocess
+            res = subprocess.run(["python3", "-m", "compileall", "-q", "."], cwd=project_root)
+            if res.returncode == 0:
+                logger.info("Validação sintática aprovada.")
+                sm.transition_to(DevelopmentState.COMPLETED)
+            else:
+                logger.warning("Falha na validação sintática!")
+                tests_passed = False
+                sm.transition_to(DevelopmentState.REPAIRING)
+                logger.error("Repair loop ausente. Marcando como BLOCKED.")
+                sm.transition_to(DevelopmentState.BLOCKED)
     else:
         sm.transition_to(DevelopmentState.COMPLETED)
 
@@ -299,6 +333,7 @@ def execute_autonomous_cycle(
         )
         final_log_state = "TASK_COMPLETED" if tests_passed else "TASK_BLOCKED"
         project_mem.append_log(final_log_state, {"prompt": user_prompt, "preset": preset_name})
+        project_mem.update_task_state(task_id, "COMPLETED" if tests_passed else "BLOCKED")
 
     logger.info("Ciclo autônomo concluído com estado final: %s", sm.current_state.value)
     return str(result)

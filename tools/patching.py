@@ -120,8 +120,18 @@ def apply_patch(
             }
 
         new_text = full_text.replace(target_content, replacement_content, 1)
-        with open(safe_path, "w", encoding="utf-8") as f:
-            f.write(new_text)
+        
+        # Atomicidade real via arquivo temporário
+        import os
+        temp_path = safe_path.with_name(safe_path.name + ".jinsai.tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write(new_text)
+            os.replace(temp_path, safe_path)
+        except Exception as e:
+            if temp_path.exists():
+                os.remove(temp_path)
+            raise e
 
         return {
             "success": True,
